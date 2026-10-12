@@ -109,8 +109,8 @@ model Vehicle {
   surpriseInspectionsVehicles SurpriseInspectionVehicle[]
 
   @@unique([companyId, registrationNo])
-  // Speeds up loading the eligible vehicles for a company.
-  @@index([companyId, status, isDeleted])
+  // Speeds up loading the eligible (not soft-deleted) vehicles for a company.
+  @@index([companyId, isDeleted])
   @@map("vehicles")
 }
 

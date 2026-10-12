@@ -70,7 +70,7 @@ Based on [database.md](database.md). Only the tables Part 4 needs are implemente
 |---|---|---|
 | `companies` | tenant, `min_surprise_inspection_threshold` | none |
 | `users` | `triggered_by`, audit logs | `role` has one value, `admin`; `company_id` nullable |
-| `vehicles` | eligibility source (`status = 'active' AND is_deleted = false`) | none |
+| `vehicles` | eligibility source (`is_deleted = false`; inactive vehicles count) | index `(company_id, is_deleted)` |
 | `surprise_inspections` | one row per company + quarter | **add** `seed`, `eligible_count`, `selected_count` |
 | `surprise_inspections_vehicles` | snapshot of **every eligible** vehicle, with `is_selected` true/false | **add** `UNIQUE (surprise_inspection_id, vehicle_id)` (replaces the plain index) |
 | `audit_logs` | `surprise_inspection.created`, `surprise_inspection.verified` | none |
@@ -189,7 +189,7 @@ Three top-level folders, each with one job:
 - [ ] Create → 201, correct counts, snapshot rows = eligible count
 - [ ] Second call → 200 with the **same** selection, no new rows
 - [ ] 10 concurrent POSTs → exactly one selection exists
-- [ ] Inactive / soft-deleted vehicles are excluded
+- [ ] Inactive vehicles are eligible; soft-deleted vehicles are excluded
 - [ ] A vehicle picked in Q3 can be picked in Q4
 - [ ] `verify` returns `reproducible: true`, still true after vehicles change post-run
 - [ ] A selection only contains the requested company's vehicles; wrong credentials → 401

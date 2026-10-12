@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     data: { name: 'FleetCheck Admin', email: ADMIN_EMAIL, role: UserRole.admin },
   });
 
-  // Swift: 20 vehicles, of which 18 are eligible (one inactive, one soft-deleted).
+  // Swift: 20 vehicles, of which 19 are eligible (one inactive, which still counts; one soft-deleted).
   await prisma.vehicle.createMany({
     data: Array.from({ length: 20 }, (_, i) => ({
       companyId: COMPANY_IDS.swift,
@@ -92,7 +92,7 @@ async function seedPastSelection(
 ): Promise<void> {
   const triggeredBy = await prisma.user.findUniqueOrThrow({ where: { email: ADMIN_EMAIL } });
   const vehicles = await prisma.vehicle.findMany({
-    where: { companyId, status: VehicleStatus.active, isDeleted: false },
+    where: { companyId, isDeleted: false },
     select: { id: true },
   });
 

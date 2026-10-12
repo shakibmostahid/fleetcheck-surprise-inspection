@@ -82,7 +82,7 @@ describe('Admin surprise inspections (e2e)', () => {
   });
 
   describe('creating a selection', () => {
-    it('picks the right number of vehicles from the eligible ones only', async () => {
+    it('includes inactive vehicles and leaves out soft-deleted ones', async () => {
       await createVehicles(prisma, company.id, 20);
       await createVehicles(prisma, company.id, 2, {
         status: VehicleStatus.inactive,
@@ -96,21 +96,23 @@ describe('Admin surprise inspections (e2e)', () => {
         percentage: 25,
       }).expect(201);
 
+      // 20 active + 2 inactive are eligible; 25% of 22 rounds up to 6.
       const { created, selection } = response.body;
       expect(created).toBe(true);
       expect(selection.companyId).toBe(company.id);
-      expect(selection.eligibleCount).toBe(20);
-      expect(selection.selectedCount).toBe(5);
-      expect(selection.selectedVehicles).toHaveLength(5);
+      expect(selection.eligibleCount).toBe(22);
+      expect(selection.selectedCount).toBe(6);
+      expect(selection.selectedVehicles).toHaveLength(6);
       expect(selection.seed).toMatch(/^[0-9a-f]{64}$/);
-      selection.selectedVehicles.forEach((vehicle: { registrationNo: string }) =>
-        expect(vehicle.registrationNo).toMatch(/^VEH-/),
-      );
 
-      const snapshotRows = await prisma.surpriseInspectionVehicle.count({
+      const snapshot = await prisma.surpriseInspectionVehicle.findMany({
         where: { surpriseInspectionId: selection.id },
+        select: { vehicle: { select: { registrationNo: true } } },
       });
-      expect(snapshotRows).toBe(20);
+      const registrations = snapshot.map((row) => row.vehicle.registrationNo);
+      expect(registrations).toHaveLength(22);
+      expect(registrations).toEqual(expect.arrayContaining(['INACTIVE-1', 'INACTIVE-2']));
+      expect(registrations.some((registration) => registration.startsWith('DELETED'))).toBe(false);
 
       const auditLog = await prisma.auditLog.findFirst({
         where: { action: 'surprise_inspection.created' },

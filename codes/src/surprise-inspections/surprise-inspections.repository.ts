@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, VehicleStatus } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditEntry } from './interfaces/audit-entry.interface';
 import { NewSelection } from './interfaces/new-selection.interface';
@@ -41,9 +41,14 @@ export class SurpriseInspectionsRepository {
     });
   }
 
+  /**
+   * Every vehicle the company still has, active or inactive. Inactive vehicles stay
+   * eligible so a company can't avoid a surprise inspection by deactivating a vehicle.
+   * Only soft-deleted vehicles are left out.
+   */
   async findEligibleVehicleIds(tx: Db, companyId: string): Promise<string[]> {
     const vehicles = await tx.vehicle.findMany({
-      where: { companyId, status: VehicleStatus.active, isDeleted: false },
+      where: { companyId, isDeleted: false },
       select: { id: true },
     });
     return vehicles.map((vehicle) => vehicle.id);
