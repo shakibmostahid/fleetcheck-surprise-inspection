@@ -1,0 +1,6 @@
+# Nothing to deploy yet. Ignore local Terraform / secrets once they are added.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+.env

@@ -1,0 +1,205 @@
+// FleetCheck database schema. Tables follow database.md at the repo root.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CompanyStatus {
+  active
+  inactive
+
+  @@map("company_status")
+}
+
+enum UserRole {
+  admin // FleetCheck admin; the only role that can trigger surprise inspections
+
+  @@map("user_role")
+}
+
+enum UserStatus {
+  active
+  inactive
+
+  @@map("user_status")
+}
+
+enum VehicleStatus {
+  active
+  inactive
+
+  @@map("vehicle_status")
+}
+
+enum InspectionType {
+  scheduled
+  surprise
+
+  @@map("inspection_type")
+}
+
+enum InspectionStatus {
+  pending
+  booked
+  completed
+  cancelled
+
+  @@map("inspection_status")
+}
+
+enum InspectionResult {
+  pass
+  fail
+
+  @@map("inspection_result")
+}
+
+model Company {
+  id                             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                           String
+  /// Lowest percentage allowed for a quarterly surprise selection.
+  minSurpriseInspectionThreshold Decimal       @default(0) @map("min_surprise_inspection_threshold") @db.Decimal(5, 2)
+  status                         CompanyStatus @default(active)
+  createdAt                      DateTime      @default(now()) @map("created_at")
+  updatedAt                      DateTime      @default(now()) @updatedAt @map("updated_at")
+
+  users               User[]
+  vehicles            Vehicle[]
+  inspections         Inspection[]
+  surpriseInspections SurpriseInspection[]
+  auditLogs           AuditLog[]
+
+  @@map("companies")
+}
+
+model User {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String
+  /// Null for admins, who are not tied to one company.
+  companyId String?    @map("company_id") @db.Uuid
+  email     String     @unique
+  role      UserRole
+  status    UserStatus @default(active)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @default(now()) @updatedAt @map("updated_at")
+
+  company                      Company?             @relation(fields: [companyId], references: [id])
+  triggeredSurpriseInspections SurpriseInspection[]
+  auditLogs                    AuditLog[]
+
+  @@map("users")
+}
+
+model Vehicle {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId      String        @map("company_id") @db.Uuid
+  registrationNo String        @map("registration_no")
+  status         VehicleStatus @default(active)
+  isDeleted      Boolean       @default(false) @map("is_deleted")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @default(now()) @updatedAt @map("updated_at")
+
+  company                     Company                     @relation(fields: [companyId], references: [id])
+  inspections                 Inspection[]
+  surpriseInspectionsVehicles SurpriseInspectionVehicle[]
+
+  @@unique([companyId, registrationNo])
+  // Speeds up loading the eligible vehicles for a company.
+  @@index([companyId, status, isDeleted])
+  @@map("vehicles")
+}
+
+model Garage {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String
+  externalGarageId String   @map("external_garage_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+
+  inspections Inspection[]
+
+  @@map("garages")
+}
+
+model Inspection {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId          String            @map("company_id") @db.Uuid
+  vehicleId          String            @map("vehicle_id") @db.Uuid
+  garageId           String?           @map("garage_id") @db.Uuid
+  type               InspectionType
+  status             InspectionStatus  @default(pending)
+  result             InspectionResult?
+  externalBookingRef String?           @map("external_booking_ref")
+  reportPathUrl      String?           @map("report_path_url")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @default(now()) @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id])
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id])
+  garage  Garage? @relation(fields: [garageId], references: [id])
+
+  @@index([vehicleId, companyId, createdAt])
+  @@map("inspections")
+}
+
+/// One quarterly selection run per company. Holds everything an auditor needs to reproduce it.
+model SurpriseInspection {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  /// Format: YYYY-Qn, e.g. 2026-Q4
+  quarter          String   @db.VarChar(7)
+  percentage       Decimal  @db.Decimal(5, 2)
+  /// Random 32-byte hex seed, generated once when the selection is created.
+  seed             String   @db.VarChar(64)
+  algorithmVersion String   @map("algorithm_version")
+  eligibleCount    Int      @map("eligible_count")
+  selectedCount    Int      @map("selected_count")
+  triggeredBy      String   @map("triggered_by") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+
+  company   Company                     @relation(fields: [companyId], references: [id])
+  triggerer User                        @relation(fields: [triggeredBy], references: [id])
+  vehicles  SurpriseInspectionVehicle[]
+
+  // Guarantees one selection per company per quarter.
+  @@unique([companyId, quarter])
+  @@map("surprise_inspections")
+}
+
+/// Snapshot of every vehicle that was eligible when the selection ran, picked or not.
+model SurpriseInspectionVehicle {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  surpriseInspectionId String   @map("surprise_inspection_id") @db.Uuid
+  vehicleId            String   @map("vehicle_id") @db.Uuid
+  isSelected           Boolean  @map("is_selected")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
+
+  surpriseInspection SurpriseInspection @relation(fields: [surpriseInspectionId], references: [id], onDelete: Cascade)
+  vehicle            Vehicle            @relation(fields: [vehicleId], references: [id])
+
+  @@unique([surpriseInspectionId, vehicleId])
+  @@map("surprise_inspections_vehicles")
+}
+
+model AuditLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  companyId String?  @map("company_id") @db.Uuid
+  action    String
+  details   Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  user    User     @relation(fields: [userId], references: [id])
+  company Company? @relation(fields: [companyId], references: [id])
+
+  @@index([userId, action])
+  @@map("audit_logs")
+}

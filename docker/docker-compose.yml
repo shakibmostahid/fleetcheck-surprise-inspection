@@ -1,0 +1,43 @@
+name: fleetcheck
+
+services:
+  db:
+    image: postgres:16-alpine
+    env_file:
+      - .envs/db.env
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # Creates the separate database used by the e2e tests.
+      - ./postgres/create-test-db.sh:/docker-entrypoint-initdb.d/create-test-db.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: api.Dockerfile
+    env_file:
+      - .envs/db.env
+      - .envs/app.env
+    environment:
+      # The app listens on APP_PORT inside the container (defined in docker/.env).
+      PORT: ${APP_PORT:-3000}
+    ports:
+      - "${LOCAL_PORT:-3000}:${APP_PORT:-3000}"
+    volumes:
+      # Source is mounted so edits hot-reload; node_modules stays inside the container.
+      - ../codes:/app
+      - api-node-modules:/app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && npm run start:dev"
+
+volumes:
+  db-data:
+  api-node-modules:

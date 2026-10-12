@@ -147,3 +147,11 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Keep example env files
+!.env.example
+
+# Local app environment (template: docker/.envs/app.env.example)
+docker/.envs/app.env
+# Local database credentials (template: docker/.envs/db.env.example)
+docker/.envs/db.env
