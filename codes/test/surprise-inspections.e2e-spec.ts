@@ -1,5 +1,11 @@
 import { INestApplication } from '@nestjs/common';
-import { Company, PrismaClient, VehicleStatus } from '@prisma/client';
+import {
+  Company,
+  InspectionStatus,
+  InspectionType,
+  PrismaClient,
+  VehicleStatus,
+} from '@prisma/client';
 import request from 'supertest';
 import {
   ADMIN_EMAIL,
@@ -120,6 +126,46 @@ describe('Admin surprise inspections (e2e)', () => {
       expect(auditLog?.companyId).toBe(company.id);
     });
 
+    it('creates a pending surprise inspection for every picked vehicle', async () => {
+      await createVehicles(prisma, company.id, 20);
+
+      const response = await create({
+        companyId: company.id,
+        quarter: '2025-Q4',
+        percentage: 25,
+      }).expect(201);
+      const { selection } = response.body;
+
+      const inspections = await prisma.inspection.findMany();
+      expect(inspections).toHaveLength(5);
+      inspections.forEach((inspection) =>
+        expect(inspection).toMatchObject({
+          companyId: company.id,
+          type: InspectionType.surprise,
+          status: InspectionStatus.pending,
+          result: null,
+        }),
+      );
+
+      // Picked rows link to their inspection; unpicked rows have none.
+      const snapshot = await prisma.surpriseInspectionVehicle.findMany({
+        where: { surpriseInspectionId: selection.id },
+        include: { inspection: true },
+      });
+      snapshot.forEach((row) => {
+        if (row.isSelected) {
+          expect(row.inspection?.vehicleId).toBe(row.vehicleId);
+        } else {
+          expect(row.inspectionId).toBeNull();
+        }
+      });
+
+      selection.selectedVehicles.forEach(
+        (vehicle: { inspection: { status: string; result: null } }) =>
+          expect(vehicle.inspection).toMatchObject({ status: 'pending', result: null }),
+      );
+    });
+
     it('returns the existing selection when run twice, even with a different percentage', async () => {
       await createVehicles(prisma, company.id, 20);
 
@@ -138,6 +184,7 @@ describe('Admin surprise inspections (e2e)', () => {
       expect(second.body.selection).toEqual(first.body.selection);
       expect(await prisma.surpriseInspection.count()).toBe(1);
       expect(await prisma.surpriseInspectionVehicle.count()).toBe(20);
+      expect(await prisma.inspection.count()).toBe(5);
     });
 
     it('creates exactly one selection when many requests arrive at once', async () => {
@@ -154,6 +201,7 @@ describe('Admin surprise inspections (e2e)', () => {
       expect(new Set(responses.map((r) => r.body.selection.id)).size).toBe(1);
       expect(await prisma.surpriseInspection.count()).toBe(1);
       expect(await prisma.surpriseInspectionVehicle.count()).toBe(200);
+      expect(await prisma.inspection.count()).toBe(50);
     });
 
     it('keeps vehicles picked last quarter eligible this quarter', async () => {
@@ -170,8 +218,20 @@ describe('Admin surprise inspections (e2e)', () => {
         percentage: 100,
       }).expect(201);
 
-      expect(q4.body.selection.selectedVehicles).toEqual(q3.body.selection.selectedVehicles);
+      type Picked = { id: string; inspection: { id: string } };
+      const vehicleIds = (picked: Picked[]) => picked.map((vehicle) => vehicle.id);
+      const inspectionIds = (picked: Picked[]) => picked.map((vehicle) => vehicle.inspection.id);
+
+      // Same vehicles picked again, each with a new inspection for the new quarter.
+      expect(vehicleIds(q4.body.selection.selectedVehicles)).toEqual(
+        vehicleIds(q3.body.selection.selectedVehicles),
+      );
       expect(q4.body.selection.selectedCount).toBe(10);
+      expect(await prisma.inspection.count()).toBe(20);
+      const q3Inspections = new Set(inspectionIds(q3.body.selection.selectedVehicles));
+      inspectionIds(q4.body.selection.selectedVehicles).forEach((id) =>
+        expect(q3Inspections.has(id)).toBe(false),
+      );
     });
 
     it('keeps each company separate', async () => {
@@ -367,6 +427,7 @@ describe('Admin surprise inspections (e2e)', () => {
         eligibleCount: 200_000,
         selectedCount: 50_000,
       });
+      expect(await prisma.inspection.count()).toBe(50_000);
 
       const verification = await find(
         { companyId: company.id, quarter: '2025-Q4' },

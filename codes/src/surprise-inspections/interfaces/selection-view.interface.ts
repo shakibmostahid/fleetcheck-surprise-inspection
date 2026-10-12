@@ -1,3 +1,5 @@
+import { SelectedVehicleView } from './selected-vehicle-view.interface';
+
 /** A selection as returned by the API. */
 export interface SelectionView {
   id: string;
@@ -10,5 +12,5 @@ export interface SelectionView {
   selectedCount: number;
   triggeredBy: string;
   createdAt: Date;
-  selectedVehicles: { id: string; registrationNo: string }[];
+  selectedVehicles: SelectedVehicleView[];
 }

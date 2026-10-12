@@ -4,14 +4,18 @@
  *   npm run seed          -> admin user, two small companies, garages, one past selection
  *   npm run seed:large    -> the same, plus a company with 200,000 vehicles
  */
-import { PrismaClient, UserRole, VehicleStatus } from '@prisma/client';
+import { InspectionResult, InspectionStatus, UserRole, VehicleStatus } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
+import { PrismaService } from '../src/prisma/prisma.service';
 import {
   ALGORITHM_VERSION,
   selectVehicles,
 } from '../src/surprise-inspections/selection/select-vehicles';
+import { SurpriseInspectionsRepository } from '../src/surprise-inspections/surprise-inspections.repository';
 
-const prisma = new PrismaClient();
+const prisma = new PrismaService();
+// The same repository the API uses, so seeded selections are saved exactly like real ones.
+const repository = new SurpriseInspectionsRepository(prisma);
 
 /** Must match ADMIN_EMAIL in docker/.envs/app.env, which the API uses for Basic auth. */
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? 'admin@fleetcheck.test';
@@ -84,42 +88,48 @@ async function clearDatabase(): Promise<void> {
   `);
 }
 
-/** Last quarter's selection, made with the real algorithm, so GET and verify work straight away. */
+/**
+ * Last quarter's selection, made with the real algorithm and saved by the real repository,
+ * so the read and verify endpoints work straight away. Its inspections are already done.
+ */
 async function seedPastSelection(
   companyId: string,
   quarter: string,
   percentage: number,
 ): Promise<void> {
   const triggeredBy = await prisma.user.findUniqueOrThrow({ where: { email: ADMIN_EMAIL } });
-  const vehicles = await prisma.vehicle.findMany({
-    where: { companyId, isDeleted: false },
-    select: { id: true },
-  });
+  const garage = await prisma.garage.findFirstOrThrow();
 
-  const seed = randomBytes(32).toString('hex');
-  const result = selectVehicles({ vehicleIds: vehicles.map((v) => v.id), percentage, seed });
-  const selected = new Set(result.selectedIds);
-
-  await prisma.surpriseInspection.create({
-    data: {
-      companyId,
-      quarter,
-      percentage,
-      seed,
-      algorithmVersion: ALGORITHM_VERSION,
-      eligibleCount: result.eligibleIds.length,
-      selectedCount: result.selectedIds.length,
-      triggeredBy: triggeredBy.id,
-      vehicles: {
-        createMany: {
-          data: result.eligibleIds.map((vehicleId) => ({
-            vehicleId,
-            isSelected: selected.has(vehicleId),
-          })),
-        },
+  const selection = await repository.runInTransaction(async (tx) => {
+    const vehicleIds = await repository.findEligibleVehicleIds(tx, companyId);
+    const seed = randomBytes(32).toString('hex');
+    const result = selectVehicles({ vehicleIds, percentage, seed });
+    return repository.createSelection(
+      tx,
+      {
+        companyId,
+        quarter,
+        percentage,
+        seed,
+        algorithmVersion: ALGORITHM_VERSION,
+        triggeredBy: triggeredBy.id,
       },
-    },
+      result,
+    );
   });
+
+  // Mark the inspections completed: the first one failed, the rest passed.
+  const picked = await repository.findSelectedVehicles(selection.id);
+  for (const [index, { inspection }] of picked.entries()) {
+    await prisma.inspection.update({
+      where: { id: inspection!.id },
+      data: {
+        garageId: garage.id,
+        status: InspectionStatus.completed,
+        result: index === 0 ? InspectionResult.fail : InspectionResult.pass,
+      },
+    });
+  }
 }
 
 async function seedLargeFleet(): Promise<void> {

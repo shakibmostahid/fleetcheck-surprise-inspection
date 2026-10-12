@@ -11,6 +11,7 @@ import { isFutureQuarter } from '../common/quarter';
 import { CreateSurpriseInspectionDto } from './dto/create-surprise-inspection.dto';
 import { FindSurpriseInspectionDto } from './dto/find-surprise-inspection.dto';
 import { CreateSelectionResponse } from './interfaces/create-selection-response.interface';
+import { SelectedVehicleView } from './interfaces/selected-vehicle-view.interface';
 import { SelectionOutcome } from './interfaces/selection-outcome.interface';
 import { SelectionView } from './interfaces/selection-view.interface';
 import { VerificationResult } from './interfaces/verification-result.interface';
@@ -179,6 +180,11 @@ export class SurpriseInspectionsService {
     return selection;
   }
 
+  private async findSelectedVehicles(surpriseInspectionId: string): Promise<SelectedVehicleView[]> {
+    const rows = await this.repository.findSelectedVehicles(surpriseInspectionId);
+    return rows.map(({ vehicle, inspection }) => ({ ...vehicle, inspection }));
+  }
+
   private async toView(selection: SurpriseInspection): Promise<SelectionView> {
     return {
       id: selection.id,
@@ -191,7 +197,7 @@ export class SurpriseInspectionsService {
       selectedCount: selection.selectedCount,
       triggeredBy: selection.triggeredBy,
       createdAt: selection.createdAt,
-      selectedVehicles: await this.repository.findSelectedVehicles(selection.id),
+      selectedVehicles: await this.findSelectedVehicles(selection.id),
     };
   }
 }
